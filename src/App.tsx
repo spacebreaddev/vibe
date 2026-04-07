@@ -2,11 +2,19 @@ import { useState, useEffect, useRef } from 'react'
 import { buildGrid, getWinningLines } from './data/bingoItems'
 import type { BingoItem } from './data/bingoItems'
 import Lobby from './components/Lobby'
+import WaitingRoom from './components/WaitingRoom'
 import BingoCard from './components/BingoCard'
 import Results from './components/Results'
-import { broadcastEndGame, onEndGame } from './lib/realtime'
+import {
+  joinGame, startGame, broadcastEndGame, sendMarkUpdate, resetGame,
+  onGameState, onJoinAccepted, onJoinRejected, onPlayerCount,
+  onGameStarted, onGameEnded, onGameReset,
+} from './lib/realtime'
+import type { PlayerResult } from './lib/realtime'
 
-type Phase = 'lobby' | 'playing' | 'ended'
+type Phase = 'lobby' | 'waiting' | 'playing' | 'ended'
+
+const HOST_NAME = 'Super Derrick'
 
 const KEYFRAMES = `
 @keyframes shimmer {
@@ -19,10 +27,6 @@ const KEYFRAMES = `
   60%  { transform: scale(1.12) rotate(2deg); }
   100% { transform: scale(1); }
 }
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50%       { transform: translateY(-8px); }
-}
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -31,18 +35,16 @@ const KEYFRAMES = `
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('lobby')
+  const [serverState, setServerState] = useState<string>('waiting')
   const [playerName, setPlayerName] = useState('')
   const [grid, setGrid] = useState<BingoItem[]>([])
-  const [marked, setMarked] = useState<Set<number>>(new Set([12])) // FREE always marked
+  const [marked, setMarked] = useState<Set<number>>(new Set([12]))
+  const [playerCount, setPlayerCount] = useState(0)
   const [prevBingos, setPrevBingos] = useState(0)
   const [newBingo, setNewBingo] = useState(false)
+  const [joinError, setJoinError] = useState<string | null>(null)
+  const [summary, setSummary] = useState<PlayerResult[]>([])
   const bingoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Cross-machine end-game sync via Socket.io
-  useEffect(() => {
-    const unsub = onEndGame(() => setPhase('ended'))
-    return unsub
-  }, [])
 
   useEffect(() => {
     const style = document.createElement('style')
@@ -51,9 +53,37 @@ export default function App() {
     return () => { document.head.removeChild(style) }
   }, [])
 
-  const winningLines = getWinningLines(marked)
+  // ── Server event listeners ────────────────────────────────────────────────
+  useEffect(() => {
+    const offs = [
+      onGameState((state) => setServerState(state)),
+      onJoinAccepted(() => setPhase('waiting')),
+      onJoinRejected((reason) => setJoinError(reason)),
+      onPlayerCount((count) => setPlayerCount(count)),
+      onGameStarted(() => {
+        setPhase('playing')
+        setPrevBingos(0)
+      }),
+      onGameEnded((s) => {
+        setSummary(s)
+        setPhase('ended')
+      }),
+      onGameReset(() => {
+        setPhase('lobby')
+        setPlayerName('')
+        setGrid([])
+        setMarked(new Set([12]))
+        setSummary([])
+        setJoinError(null)
+        setPrevBingos(0)
+        setNewBingo(false)
+      }),
+    ]
+    return () => offs.forEach((off) => off())
+  }, [])
 
   // Detect new bingos
+  const winningLines = getWinningLines(marked)
   useEffect(() => {
     if (winningLines.length > prevBingos && phase === 'playing') {
       setNewBingo(true)
@@ -63,46 +93,89 @@ export default function App() {
     }
   }, [winningLines.length])
 
-  function handleStart(name: string) {
+  // Sync mark state to server whenever it changes during play
+  useEffect(() => {
+    if (phase === 'playing') {
+      sendMarkUpdate(Array.from(marked))
+    }
+  }, [marked, phase])
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  function handleJoin(name: string) {
+    const newGrid = buildGrid()
     setPlayerName(name)
-    setGrid(buildGrid())
+    setGrid(newGrid)
     setMarked(new Set([12]))
-    setPrevBingos(0)
-    setPhase('playing')
+    setJoinError(null)
+    joinGame(name, newGrid)
+  }
+
+  function handleStartGame() {
+    startGame(playerName)
   }
 
   function handleToggle(index: number) {
     setMarked((prev) => {
       const next = new Set(prev)
-      if (next.has(index)) {
-        next.delete(index)
-      } else {
-        next.add(index)
-      }
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
       return next
     })
   }
 
   function handleEnd() {
-    broadcastEndGame() // tells server → server tells all connected clients
+    broadcastEndGame(playerName)
   }
 
   function handlePlayAgain() {
-    setPhase('lobby')
-    setMarked(new Set([12]))
-    setPrevBingos(0)
-    setNewBingo(false)
+    if (playerName === HOST_NAME) {
+      // Host resets for everyone
+      resetGame(playerName)
+    } else {
+      // Non-host just goes back to their lobby locally
+      setPhase('lobby')
+      setPlayerName('')
+      setGrid([])
+      setMarked(new Set([12]))
+      setSummary([])
+    }
   }
 
-  if (phase === 'lobby') return <Lobby onStart={handleStart} />
-  if (phase === 'ended') return (
-    <Results
-      playerName={playerName}
-      grid={grid}
-      marked={marked}
-      onPlayAgain={handlePlayAgain}
-    />
-  )
+  // ── Render ────────────────────────────────────────────────────────────────
+  if (phase === 'lobby') {
+    return (
+      <Lobby
+        onStart={handleJoin}
+        joinError={joinError}
+        serverState={serverState}
+      />
+    )
+  }
+
+  if (phase === 'waiting') {
+    return (
+      <WaitingRoom
+        playerName={playerName}
+        playerCount={playerCount}
+        onStartGame={handleStartGame}
+      />
+    )
+  }
+
+  if (phase === 'ended') {
+    return (
+      <Results
+        playerName={playerName}
+        grid={grid}
+        marked={marked}
+        summary={summary}
+        onPlayAgain={handlePlayAgain}
+      />
+    )
+  }
+
+  // ── Playing ───────────────────────────────────────────────────────────────
+  const isHost = playerName === HOST_NAME
 
   return (
     <div
@@ -147,27 +220,30 @@ export default function App() {
           </p>
         </div>
 
-        <button
-          onClick={handleEnd}
-          style={{
-            background: 'linear-gradient(135deg, #c8102e, #8b0000)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '0.55rem 1.2rem',
-            fontWeight: 800,
-            fontSize: '0.8rem',
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            cursor: 'pointer',
-            boxShadow: '0 2px 12px #c8102e55',
-            transition: 'transform 0.15s',
-          }}
-          onMouseEnter={(e) => ((e.target as HTMLElement).style.transform = 'scale(1.05)')}
-          onMouseLeave={(e) => ((e.target as HTMLElement).style.transform = 'scale(1)')}
-        >
-          End Game
-        </button>
+        {/* Only host sees End Game */}
+        {isHost && (
+          <button
+            onClick={handleEnd}
+            style={{
+              background: 'linear-gradient(135deg, #c8102e, #8b0000)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '0.55rem 1.2rem',
+              fontWeight: 800,
+              fontSize: '0.8rem',
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              cursor: 'pointer',
+              boxShadow: '0 2px 12px #c8102e55',
+              transition: 'transform 0.15s',
+            }}
+            onMouseEnter={(e) => ((e.target as HTMLElement).style.transform = 'scale(1.05)')}
+            onMouseLeave={(e) => ((e.target as HTMLElement).style.transform = 'scale(1)')}
+          >
+            End Game
+          </button>
+        )}
       </div>
 
       {/* Bingo celebration banner */}
@@ -202,7 +278,6 @@ export default function App() {
         />
       </div>
 
-      {/* Footer hint */}
       <p
         style={{
           textAlign: 'center',
@@ -214,6 +289,7 @@ export default function App() {
         }}
       >
         Click a square to mark it · Click again to unmark
+        {!isHost && ' · Only Super Derrick can end the game'}
       </p>
     </div>
   )

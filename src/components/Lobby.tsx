@@ -2,15 +2,19 @@ import { useState } from 'react'
 
 interface Props {
   onStart: (playerName: string) => void
+  joinError?: string | null
+  serverState?: string
 }
 
-export default function Lobby({ onStart }: Props) {
+export default function Lobby({ onStart, joinError, serverState }: Props) {
   const [name, setName] = useState('')
+
+  const gameActive = serverState === 'playing' || serverState === 'ended'
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const trimmed = name.trim()
-    if (!trimmed) return
+    if (!trimmed || gameActive) return
     onStart(trimmed)
   }
 
@@ -95,12 +99,12 @@ export default function Lobby({ onStart }: Props) {
 
           <button
             type="submit"
-            disabled={!name.trim()}
+            disabled={!name.trim() || gameActive}
             style={{
-              background: name.trim()
+              background: name.trim() && !gameActive
                 ? 'linear-gradient(135deg, #c8102e 0%, #ff6b35 100%)'
                 : '#2e2e4a',
-              color: name.trim() ? '#fff' : '#666',
+              color: name.trim() && !gameActive ? '#fff' : '#666',
               border: 'none',
               borderRadius: '10px',
               fontSize: '1rem',
@@ -108,18 +112,36 @@ export default function Lobby({ onStart }: Props) {
               letterSpacing: '0.1em',
               textTransform: 'uppercase',
               padding: '0.85rem 1rem',
-              cursor: name.trim() ? 'pointer' : 'not-allowed',
+              cursor: name.trim() && !gameActive ? 'pointer' : 'not-allowed',
               transition: 'all 0.2s',
-              boxShadow: name.trim() ? '0 4px 20px #c8102e55' : 'none',
+              boxShadow: name.trim() && !gameActive ? '0 4px 20px #c8102e55' : 'none',
             }}
           >
-            Get My Card 🎟️
+            {gameActive ? '🔒 Game In Progress' : 'Get My Card 🎟️'}
           </button>
         </form>
 
         <p style={{ color: '#444466', fontSize: '0.72rem', marginTop: '1.5rem' }}>
-          Your card is randomly generated — good luck!
+          {gameActive
+            ? 'A game is currently in progress. Wait for the next round.'
+            : 'Your card is randomly generated — good luck!'}
         </p>
+
+        {joinError && (
+          <div
+            style={{
+              marginTop: '1rem',
+              background: '#2a0a0a',
+              border: '1px solid #c8102e55',
+              borderRadius: '8px',
+              padding: '0.6rem 1rem',
+              fontSize: '0.78rem',
+              color: '#ff8888',
+            }}
+          >
+            {joinError}
+          </div>
+        )}
       </div>
 
       <FilmStrip />
