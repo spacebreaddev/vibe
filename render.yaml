@@ -1,0 +1,27 @@
+# render.yaml — Render.com deployment config
+# Deploys both the Socket.io server and the static frontend in one file.
+# See: https://render.com/docs/render-yaml-spec
+
+services:
+  # --- Backend: Socket.io server ---
+  - type: web
+    name: vibe-bingo-server
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    plan: free
+    envVars:
+      - key: PORT
+        value: 10000
+
+  # --- Frontend: static Vite build ---
+  - type: web
+    name: vibe-bingo-frontend
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    plan: free
+    envVars:
+      - key: VITE_SERVER_URL
+        sync: false   # Fill in the deployed server URL in the Render dashboard
