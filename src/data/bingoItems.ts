@@ -22,7 +22,7 @@ export const BINGO_ITEMS: BingoItem[] = [
   { id: 15, label: 'Derrick from San Antonio',     icon: '🤠' },
   { id: 16, label: 'Bring Your Own Cup',           icon: '☕' },
   { id: 17, label: 'Preview: Artist / Performer',  icon: '🎭' },
-  { id: 18, label: 'ODEAN Mentioned',              icon: '📢' },
+  { id: 18, label: 'ODEON Mentioned',               icon: '📢' },
   { id: 19, label: 'KC Corporate Challenge',       icon: '🏆' },
   { id: 20, label: 'Upcoming Blockbuster',         icon: '🎥' },
   { id: 21, label: 'Past Blockbuster Performance', icon: '📊' },
